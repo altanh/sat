@@ -17,6 +17,7 @@ sns.set_style("white")
 
 COMPONENT_CUTOFF = 10
 MAX_NUM_COMPONENTS = 10
+OUTPUT_DIR = "spectral/renders"
 
 
 def compute_eigenpairs(A, k=2):
@@ -84,115 +85,6 @@ def plot_edges(ax, lines, d=2):
         )
 
 
-def run(args):
-    COMPONENT_CUTOFF = 10
-
-    input_file = args.input_file
-    d = args.dim
-
-    # read matrix market file
-    t = time.time()
-    A = sp.io.mmread(input_file).asfptype().tocsr()
-    print("read matrix in {:.2f} seconds".format(time.time() - t))
-
-    # check connected components
-    t = time.time()
-    n_components, labels = sp.sparse.csgraph.connected_components(A)
-    print(
-        "found {} connected components in {:.2f} seconds".format(
-            n_components, time.time() - t
-        )
-    )
-
-    A_subs = []
-    Ap_subs = []
-
-    # split into connected components
-    for i in range(n_components):
-        num_vertices = np.sum(labels == i)
-        print("- component {} has {} vertices".format(i, num_vertices))
-        if num_vertices < COMPONENT_CUTOFF:
-            print("  (skipping...)")
-            continue
-
-        # get submatrix
-        A_sub = A[labels == i, :][:, labels == i]
-        # convert to positive adjacency matrix
-        Ap_sub = sp.sparse.csr_matrix(A_sub)
-        Ap_sub.data = np.ones_like(Ap_sub.data)
-        A_subs.append(A_sub.tocoo())
-        Ap_subs.append(Ap_sub)
-
-    for i in range(len(A_subs)):
-        print("processing component {}...".format(i))
-
-        A_sub = A_subs[i]
-        Ap_sub = Ap_subs[i]
-
-        t = time.time()
-        v = sklearn.manifold.spectral_embedding(
-            Ap_sub, n_components=d, eigen_solver="lobpcg", norm_laplacian=True
-        )
-        # _, v = compute_eigenpairs(Ap_sub, k=2)
-        print("calculated embedding in {:.2f} seconds".format(time.time() - t))
-
-        fig = plt.figure(figsize=(10, 10))
-        ax = fig.add_subplot(projection="3d" if d == 3 else None)
-
-        # plot vertex positions
-        t = time.time()
-        plot_vertices(ax, v, d=d)
-        print("plotted vertex positions in {:.2f} seconds".format(time.time() - t))
-
-        # plot edges as lines
-        t = time.time()
-        lines = calculate_edges(A_sub, v, d=d)
-        plot_edges(ax, lines, d=d)
-        print("plotted edges in {:.2f} seconds".format(time.time() - t))
-
-        plt.axis("off")
-
-        # save figure to output folder, get output file name from input file name
-        problem_name = os.path.splitext(os.path.basename(input_file))[0]
-
-        if d == 3:
-
-            def animate(i):
-                ax.view_init(elev=10.0, azim=i)
-                return (fig,)
-
-            def progress_callback(i, n):
-                if i % 10 == 0:
-                    print("rendering frame {} of {}".format(i, n))
-
-            anim = animation.FuncAnimation(
-                fig, animate, frames=360, interval=1, blit=True
-            )
-            output_file = os.path.join(
-                "spectral/renders", problem_name + "_{}.mp4".format(i)
-            )
-            t = time.time()
-            anim.save(output_file, fps=30, progress_callback=progress_callback)
-            print(
-                "saved animation to {} in {:.2f} seconds".format(
-                    output_file, time.time() - t
-                )
-            )
-        else:
-            output_file = os.path.join(
-                "spectral/renders", problem_name + "_{}.png".format(i)
-            )
-            t = time.time()
-            plt.savefig(output_file, dpi=300, bbox_inches="tight")
-            print(
-                "saved figure to {} in {:.2f} seconds".format(
-                    output_file, time.time() - t
-                )
-            )
-
-        plt.clf()
-
-
 def split_components(A):
     """
     Split a graph into connected components, and filter out small components.
@@ -216,6 +108,98 @@ def split_components(A):
     return components, component_sizes
 
 
+def run(args):
+    input_file = args.input_file
+    d = args.dim
+
+    # read matrix market file
+    t = time.time()
+    A = sp.io.mmread(input_file).asfptype().tocsr()
+    print("read matrix in {:.2f} seconds".format(time.time() - t))
+
+    A_subs = []
+    Ap_subs = []
+
+    # split into connected components
+    A_subs, _ = split_components(A)
+    # sort by largest first
+    A_subs.sort(key=lambda A_sub: A_sub.shape[0], reverse=True)
+
+    Ap_subs = [sp.sparse.csr_matrix(A_sub) for A_sub in A_subs]
+    for Ap_sub in Ap_subs:
+        Ap_sub.data = np.ones_like(Ap_sub.data)
+    A_subs = [A_sub.tocoo() for A_sub in A_subs]
+
+    for i in range(len(A_subs)):
+        print("processing component {} with {} vertices...".format(i, A_subs[i].shape[0]))
+
+        A_sub = A_subs[i]
+        Ap_sub = Ap_subs[i]
+
+        t = time.time()
+        v = sklearn.manifold.spectral_embedding(
+            Ap_sub, n_components=d, eigen_solver="lobpcg", norm_laplacian=True
+        )
+        # _, v = compute_eigenpairs(Ap_sub, k=2)
+        print("  calculated embedding in {:.2f} seconds".format(time.time() - t))
+
+        fig = plt.figure(figsize=(10, 10))
+        ax = fig.add_subplot(projection="3d" if d == 3 else None)
+
+        # plot vertex positions
+        t = time.time()
+        plot_vertices(ax, v, d=d)
+        print("  plotted vertex positions in {:.2f} seconds".format(time.time() - t))
+
+        # plot edges as lines
+        t = time.time()
+        lines = calculate_edges(A_sub, v, d=d)
+        plot_edges(ax, lines, d=d)
+        print("  plotted edges in {:.2f} seconds".format(time.time() - t))
+
+        plt.axis("off")
+
+        # save figure to output folder, get output file name from input file name
+        problem_name = os.path.splitext(os.path.basename(input_file))[0]
+
+        if d == 3:
+
+            def animate(i):
+                ax.view_init(elev=10.0, azim=i)
+                return (fig,)
+
+            def progress_callback(i, n):
+                if i % 10 == 0:
+                    print("  |> rendering frame {} of {}".format(i, n))
+
+            anim = animation.FuncAnimation(
+                fig, animate, frames=360, interval=1, blit=True
+            )
+            output_file = os.path.join(
+                args.output_dir, problem_name + "_{}.mp4".format(i)
+            )
+            t = time.time()
+            anim.save(output_file, dpi=200, fps=30, progress_callback=progress_callback)
+            print(
+                "saved animation to {} in {:.2f} seconds".format(
+                    output_file, time.time() - t
+                )
+            )
+        else:
+            output_file = os.path.join(
+                args.output_dir, problem_name + "_{}.png".format(i)
+            )
+            t = time.time()
+            plt.savefig(output_file, dpi=300, bbox_inches="tight")
+            print(
+                "saved figure to {} in {:.2f} seconds".format(
+                    output_file, time.time() - t
+                )
+            )
+
+        plt.clf()
+
+
 def run_split_polarity(args):
     """
     Run spectral embedding, but split the graph into two graphs of positive and negative edges.
@@ -231,13 +215,7 @@ def run_split_polarity(args):
     print("read matrix in {:.2f} seconds".format(time.time() - t))
 
     # check connected components
-    t = time.time()
     components, component_sizes = split_components(A)
-    print(
-        "found {} connected components in {:.2f} seconds".format(
-            len(components), time.time() - t
-        )
-    )
 
     # choose largest component
     A = components[np.argmax(component_sizes)].tocoo()
@@ -296,7 +274,7 @@ def run_split_polarity(args):
                 Ap_sub, n_components=d, eigen_solver="lobpcg", norm_laplacian=True
             )
             # _, v = compute_eigenpairs(Ap_sub, k=2)
-            print("calculated embedding in {:.2f} seconds".format(time.time() - t))
+            print("  calculated embedding in {:.2f} seconds".format(time.time() - t))
 
             fig = plt.figure(figsize=(10, 10))
             ax = fig.add_subplot(projection="3d" if d == 3 else None)
@@ -304,13 +282,13 @@ def run_split_polarity(args):
             # plot vertex positions
             t = time.time()
             plot_vertices(ax, v, d=d)
-            print("plotted vertex positions in {:.2f} seconds".format(time.time() - t))
+            print("  plotted vertex positions in {:.2f} seconds".format(time.time() - t))
 
             # plot edges as lines
             t = time.time()
             lines = calculate_edges(A_sub, v, d=d)
             plot_edges(ax, lines, d=d)
-            print("plotted edges in {:.2f} seconds".format(time.time() - t))
+            print("  plotted edges in {:.2f} seconds".format(time.time() - t))
 
             plt.axis("off")
 
@@ -318,7 +296,7 @@ def run_split_polarity(args):
             problem_name = os.path.splitext(os.path.basename(input_file))[0]
 
             # make folder if doesn't exist
-            output_folder = os.path.join("spectral/renders/split", problem_name)
+            output_folder = os.path.join(args.output_dir, "split", problem_name)
             if not os.path.exists(output_folder):
                 os.makedirs(output_folder)
 
@@ -330,7 +308,7 @@ def run_split_polarity(args):
 
                 def progress_callback(i, n):
                     if i % 10 == 0:
-                        print("rendering frame {} of {}".format(i, n))
+                        print("  rendering frame {} of {}".format(i, n))
 
                 anim = animation.FuncAnimation(
                     fig, animate, frames=360, interval=1, blit=True
@@ -340,7 +318,7 @@ def run_split_polarity(args):
                     problem_name
                     + "_"
                     + ("pos" if j == 0 else "neg")
-                    + "_{}.gif".format(i),
+                    + "_{}.mp4".format(i),
                 )
                 t = time.time()
                 anim.save(output_file, fps=30, progress_callback=progress_callback)
@@ -375,7 +353,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "--split", action="store_true", help="split into positive and negative edges"
     )
+    parser.add_argument("--output-dir", type=str, default=OUTPUT_DIR)
     args = parser.parse_args()
+
+    # ensure output directory exists
+    if not os.path.exists(args.output_dir):
+        os.makedirs(args.output_dir)
 
     if args.split:
         run_split_polarity(args)

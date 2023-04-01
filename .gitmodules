@@ -1,6 +1,0 @@
-[submodule "external/spectra"]
-	path = external/spectra
-	url = https://github.com/yixuan/spectra
-[submodule "external/eigen"]
-	path = external/eigen
-	url = https://gitlab.com/libeigen/eigen
