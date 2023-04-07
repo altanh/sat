@@ -1,8 +1,5 @@
 #!/bin/bash
 
-POLARITY_BY_EDGE="false"
-OUTPUT_ALL_EDGES="false"
-
 cd 2021
 
 # Decompress each .cnf.xz file in the 2021 directory.
@@ -14,7 +11,7 @@ done
 # Convert each .cnf file to the .mtx factor graph encoding.
 for f in *.cnf; do
     echo "Converting $f to .mtx..."
-    ../../util/cnf2mtx $f $POLARITY_BY_EDGE $OUTPUT_ALL_EDGES
+    ../../util/cnf2mtx -f $f -o ${f}.mtx -t factor
 done
 
 cd .. # Back to the benchmarks directory.
